@@ -13,49 +13,95 @@ import (
 
 var mu sync.Mutex
 
+var (
+	prefix  string = "" // Изначально пусто
+	counter int    = 1  // Начинаем с 1
+)
+
 func initClipboard() {
 	if err := clipboard.Init(); err != nil {
 		log.Fatalf("Ошибка инициализации буфера: %v", err)
 	}
 }
 
-func readNumberFromClipboard() int {
+func writePrefixAndNumber(pref string, num int) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	data := clipboard.Read(clipboard.FmtText)
-	if data == nil {
-		return 0
-	}
-	text := strings.TrimSpace(string(data))
-	num, err := strconv.Atoi(text)
-	if err != nil {
-		return 0
-	}
-	return num
-}
-
-func writeNumberToClipboard(num int) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	clipboard.Write(clipboard.FmtText, []byte(strconv.Itoa(num)))
+	text := pref + strconv.Itoa(num)
+	clipboard.Write(clipboard.FmtText, []byte(text))
+	fmt.Printf("Значение в буфере%s\n", text)
 }
 
 func onCtrlV() {
-	num := readNumberFromClipboard()
-	if num == 0 {
-		num = 1
-	} else {
-		num++
-	}
-	writeNumberToClipboard(num)
-	fmt.Printf("Буфер обновлён: %d\n", num)
+	mu.Lock()
+	p := prefix
+	c := counter
+	mu.Unlock()
+
+	writePrefixAndNumber(p, c)
+
+	//fmt.Printf("Буфер обновлён: %s%d\n", p, c)
+
+	// Обновляем глобальный счётчик
+	mu.Lock()
+	counter = c + 1
+	mu.Unlock()
 }
-func mainTwo() {
-	fmt.Println("--- Please press ctrl + shift + q to stop gohook ---")
+
+// Функция для ввода префикса в консоли
+func inputPrefixFromConsole() {
+	fmt.Print("\nВведите новый префикс (или пусто для удаления): ")
+	var initValue string
+	var newPrefix string
+	var newCounter int
+	fmt.Scanln(&initValue)
+
+	if initValue == "" {
+		newPrefix = ""
+		newCounter = 1
+	} else {
+		// Найти где начинается число в конце строки
+		i := len(initValue) - 1
+		for i >= 0 && initValue[i] >= '0' && initValue[i] <= '9' {
+			i--
+		}
+
+		// Если нет цифр в конце, вернуть текущие значения
+		if i == len(initValue)-1 {
+			newCounter = 1
+			newPrefix = initValue
+		} else {
+			newPrefix = initValue[:i+1]
+			numStr := initValue[i+1:]
+			num, err := strconv.Atoi(numStr)
+			if err != nil {
+				newCounter = 1
+			} else {
+				newCounter = num
+			}
+		}
+	}
+
+	mu.Lock()
+	prefix = newPrefix
+	counter = newCounter
+	mu.Unlock()
+
+	fmt.Printf("Префикс: '%s'\nСчетчик: '%d'\n", prefix, counter)
+}
+
+func main() {
+	initClipboard()
+
+	// Инициализируем с нулевым значением
+	writePrefixAndNumber(prefix, counter)
+	fmt.Printf("Инициализировано: %s%d\n", prefix, counter)
+	fmt.Println("--- Нажимай Ctrl + V или C в консоли для смены начального значения ---")
+	fmt.Println("--- Нажимай Ctrl + Shift + Q для выхода ---")
+
 	gohook.Register(gohook.KeyDown, []string{"q", "ctrl", "shift"}, func(e gohook.Event) {
-		fmt.Println("ctrl-shift-q")
+		fmt.Println("\nExit...")
 		gohook.End()
 	})
 
@@ -63,16 +109,22 @@ func mainTwo() {
 		onCtrlV()
 	})
 
-	s := gohook.Start()
-	<-gohook.Process(s)
+	// Запускаем горутину для слушания ввода в консоли
+	go func() {
+		for {
+			var input string
+			fmt.Scanln(&input)
 
-	evChan := gohook.Start()
+			// Если пользователь ввёл "c" или "C" в консоли
+			if strings.ToLower(input) == "c" {
+				inputPrefixFromConsole()
+			}
+		}
+	}()
+
+	s := gohook.Start()
 	defer gohook.End()
 
-	for ev := range evChan {
-		fmt.Println("gohook: ", ev)
-	}
-}
-func main() {
-	mainTwo()
+	<-gohook.Process(s)
+	fmt.Println("Program finished")
 }
